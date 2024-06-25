@@ -1,0 +1,741 @@
+---
+title: "COVID-19 Analysis (in R) — Local and Global"
+author: "Jonathon Watterson"
+date: "2024-05-13"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{css, echo=FALSE}
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap');
+
+body {
+  font-family: 'Lato', sans-serif;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center'
+)
+
+```
+
+## Overview
+The COVID-19 pandemic has profoundly affected the United States since its onset in 2020. This analysis examines the progression of COVID-19 cases and deaths at national, state, and county levels, utilizing data aggregated by The New York Times and population estimates from the US Census Bureau. Authored using the R language in R Markdown, this analysis aims to provide insights into the spread of the pandemic and its impact over time.
+
+## Required Packages
+
+To perform this analysis, the following R packages were used:
+
+```{r required-packages, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(usmap)
+library(ggplot2)
+library(scales)
+```
+
+### Data Sources
+
+This analysis relies on multiple data sources to provide a comprehensive view of the COVID-19 pandemic's impact at various levels. The primary data sources include county-level COVID-19 data from The New York Times and global data from the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University.
+
+
+**NY Times County-level COVID-19 Data (2020, 2021, 2022):** Each row represents the cumulative number of cases and deaths for a specific county on a given day. The data set includes FIPS codes, which are standard geographic identifiers essential for constructing county-level map visualizations.
+
+```{r import-nyt-data, message = FALSE}
+
+us_counties_2020 <- read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2020.csv")
+us_counties_2021 <- read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2021.csv")
+us_counties_2022 <- read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2022.csv")
+
+```
+
+**County-level Population Estimates:** Sourced from the US Census Bureau, these estimates are used to calculate statistics per 100,000 people, providing a normalized view of the data for comparative analysis.
+
+```{r population-estimates}
+us_population_estimates <- read_csv("fips_population_estimates.csv")
+```
+
+**Global Data**:Global COVID-19 statistics are aggregated by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University. These datasets include confirmed cases and deaths, and are used alongside global population estimates from the World Bank.
+
+```{r import-csse, message = FALSE}
+
+# Import global COVID-19 statistics aggregated by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University
+csse_global_deaths <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
+csse_global_cases <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+csse_us_deaths <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+csse_us_cases <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv")
+
+# Import global population estimates from the World Bank.
+global_population_estimates <- read_csv("global_population_estimates.csv")
+```
+
+### Combining and Tidying Data for Analysis
+
+The initial step in this analysis involved combining and tidying the COVID-19 datasets for the years 2020, 2021, and 2022. The data, sourced from The New York Times, includes cumulative cases and deaths for each county in the United States. To focus on the 50 states and the District of Columbia, certain regions such as Puerto Rico were excluded from this analysis.
+
+The process was broken down into the following steps:
+
+1. **Combine Datasets:** Merged the COVID-19 data for 2020, 2021, and 2022 into a single dataset.
+2. **Filter Data:** Removed observations from specific regions (e.g., Puerto Rico) and filtered the data to include records between March 15, 2020, and December 31, 2022.
+3. **Calculate Totals:** Computed the total number of cases and deaths for each day within the specified date range.
+
+Below is the code used for this task:
+
+```{r part1-combining}
+
+filter_combine_us_counties <- function(date_filter_start, date_filter_end) {
+  
+  # Combine the datasets
+  us_counties <- rbind(us_counties_2020, us_counties_2021, us_counties_2022)
+  
+  # Define regions to exclude
+  regions_to_exclude <- c("Puerto Rico", "Guam", "Virgin Islands", "Northern Mariana Islands", "American Samoa")
+  
+  # Filter the dataset based on the date range and excluded regions
+  us_counties_filtered <- us_counties %>%
+    filter(!state %in% regions_to_exclude) %>%
+    filter(date >= as.Date(date_filter_start) & date <= as.Date(date_filter_end))
+  
+  return(us_counties_filtered)
+}
+
+date_filter_start <- "2020-03-15"
+date_filter_end <- "2022-12-31"
+
+# Combine the datasets
+us_counties_filtered <- filter_combine_us_counties(date_filter_start,date_filter_end)
+
+# Find the maximum date in the filtered data
+max_date <- max(us_counties_filtered$date, na.rm = TRUE)
+
+# Filter data for the maximum date
+data_max_date <- us_counties_filtered %>%
+  filter(date == max_date)
+
+# Find totals for the maximum date
+us_total_cases <- sum(data_max_date$cases, na.rm = TRUE)
+us_total_deaths <- sum(data_max_date$deaths, na.rm = TRUE)
+
+```
+
+#### Preliminary Statstics
+
+The analysis of the combined and tidied dataset reveals the following key statistics:
+
+* Total COVID-19 Cases in the US (since `r format(as.Date(date_filter_start), "%B %d, %Y")`): `r format(us_total_cases, big.mark = ",", scientific = FALSE)`
+* Total COVID-19 Deaths in the US (since `r format(as.Date(date_filter_start), "%B %d, %Y")`): `r format(us_total_deaths, big.mark = ",", scientific = FALSE)`
+
+These figures provide a comprehensive overview of the pandemic's impact across the United States over the specified period.
+
+
+### Finding the Total Daily Rate of COVID Cases and Deaths in the US
+
+To understand the daily progression of COVID-19 cases and deaths in the United States, I aggregated the data to compute daily totals of cases and deaths from March 15, 2020, onward. This analysis helps in visualizing trends and understanding the daily impact of the pandemic over time.
+
+Below is the code used to calculate the daily totals of COVID-19 cases and deaths:
+
+```{r part1-table}
+
+# 'us_counties_combined' is already filtered from March 15, 2020, onward and contains 'date', 'deaths', and 'cases' columns
+daily_summary <- us_counties_filtered %>%
+  group_by(date) %>%
+  summarise(
+    total_deaths = sum(deaths, na.rm = TRUE),
+    total_cases = sum(cases, na.rm = TRUE)
+  ) %>%
+  arrange(date)  # Ensure the data is sorted by date
+
+# Display the table
+daily_summary
+
+```
+
+By computing the total daily cases and deaths, I can observe how the pandemic evolved on a day-to-day basis, highlighting peaks and trends in the spread of the virus across the country. This data is crucial for identifying significant periods during the pandemic and assessing the effectiveness of public health measures.
+
+### Visualizing the Total Daily Rate of COVID Cases and Deaths
+
+To provide a clear picture of the daily progression of COVID-19 in the United States, I created a visualization that displays the total daily cases and deaths. This visualization helps to identify trends, peaks, and the overall impact of the pandemic over time.
+
+```{r part1-visualization, warning=FALSE, fig.align="center"}
+
+# Plotting daily totals of cases and deaths with separate y axes
+ggplot(data = daily_summary, aes(x = date)) +
+  geom_line(aes(y = total_cases, color = "Total Cases"), size = 1) +  # Plot cases
+  geom_line(aes(y = total_deaths * 10, color = "Total Deaths"), size = 1) +  # Plot deaths scaled down
+  scale_y_continuous(
+    name = "Total Cases",
+    labels = scales::comma,  # Format y-axis labels with commas
+    sec.axis = sec_axis(~ . * (1/10), name = "Total Deaths", labels = scales::comma)  # Create secondary axis for deaths
+  ) +
+  scale_x_date(
+    date_breaks = "6 month",  # Set the breaks to every 6 months
+    date_labels = "%b %Y"  # Format the labels as "Month Year"
+  ) +
+  labs(title = "Daily COVID-19 Cases and Deaths",
+       x = "Date",
+       y = "Total Number (Cases)",
+       color = "Legend") +  # Title for the legend
+  scale_color_manual(values = c("Total Cases" = "blue", "Total Deaths" = "red")) +  # Define colors for the legend
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    legend.position = "bottom",  # Position the legend at the bottom
+    axis.title.y = element_text(color = "blue"),  # Color y-axis title for total cases
+    axis.text.y = element_text(color = "blue"),  # Color y-axis labels for total cases
+    axis.title.y.right = element_text(color = "red"),  # Color secondary y-axis title for total deaths
+    axis.text.y.right = element_text(color = "red")  # Color secondary y-axis labels for total deaths
+  )
+
+```
+
+This visualization provides a comprehensive overview of how COVID-19 cases and deaths have fluctuated daily, offering valuable insights into the dynamics of the pandemic.
+
+### Finding the New Cases of COVID-19 Infection
+To gain a deeper understanding of the dynamics of COVID-19, I calculated the daily new cases and deaths, as well as their seven-day moving averages. This allows for a clearer picture of the daily fluctuations and trends over time.
+
+```{r part1-change-in-cases}
+
+# Create a new table, based on the table from Question 1, and calculate the number of new deaths and cases each day and a seven day average of new deaths and cases. 
+
+# Calculate new deaths and cases each day
+daily_summary <- daily_summary %>%
+  mutate(
+    delta_deaths_1 = total_deaths - lag(total_deaths, default = NA),
+    delta_cases_1 = total_cases - lag(total_cases, default = NA)
+  )
+
+# Calculate 7-day moving averages for new deaths and new cases
+daily_summary <- daily_summary %>%
+  mutate(
+    delta_deaths_7 = (total_deaths - lag(total_deaths, 7, default = NA))/7,
+    delta_cases_7 = (total_cases - lag(total_cases, 7, default = NA))/7
+  )
+
+# Display the updated table
+daily_summary
+
+```
+
+```{r part1-change-in-cases-2, include=FALSE}
+# Find the date with the maximum number of new cases
+max_new_cases_date <- daily_summary %>%
+  filter(delta_cases_1 == max(delta_cases_1, na.rm = TRUE)) %>%
+  pull(date) %>%
+  first()
+
+# Find the date with the maximum number of new deaths
+max_new_deaths_date <- daily_summary %>%
+  filter(delta_deaths_1 == max(delta_deaths_1, na.rm = TRUE)) %>%
+  pull(date) %>%
+  first()
+```
+
+#### Results
+
+The maximum with the maximum new cases is `r format(max_new_cases_date, "%B %d, %Y")`. The date with the maximum new deaths is `r format(max_new_deaths_date, "%B %d, %Y")`.
+
+
+#### Visualization
+
+The following visualization illustrates the daily new cases and deaths, highlighting significant peaks and trends.
+
+```{r part1-change-in-cases-graph, warning=FALSE, fig.align="center"}
+
+# Plotting daily new cases and deaths
+ggplot(data = daily_summary, aes(x = date)) +
+  geom_line(aes(y = delta_cases_1, color = "New Cases"), size = 1) +  # Plot new cases
+  geom_line(aes(y = delta_deaths_1 * 10, color = "New Deaths"), size = 1) +  # Plot new deaths
+  scale_y_continuous(
+    name = "New Cases",
+    labels = scales::comma,  # Format y-axis labels with commas
+    sec.axis = sec_axis(~ . * (1/10), name = "New Deaths", labels = scales::comma)  # Create secondary axis for deaths
+  ) +
+  scale_x_date(
+    date_breaks = "6 month",  # Set the breaks to every 6 months
+    date_labels = "%b %Y"  # Format the labels as "Month Year"
+  ) +
+  labs(title = "Daily New COVID-19 Cases and Deaths",
+       x = "Date",
+       y = "Number of New Cases",
+       color = "Legend") +  # Title for the legend
+  scale_color_manual(values = c("New Cases" = "blue", "New Deaths" = "red")) +  # Define colors for the legend
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    legend.position = "bottom",  # Position the legend at the bottom
+    axis.title.y = element_text(color = "blue"),  # Color y-axis title for new cases
+    axis.text.y = element_text(color = "blue"),  # Color y-axis labels for new cases
+    axis.title.y.right = element_text(color = "red"),  # Color secondary y-axis title for new deaths
+    axis.text.y.right = element_text(color = "red")  # Color secondary y-axis labels for new deaths
+  )
+
+```
+
+By visualizing the new daily cases and deaths, the graph provides a comprehensive overview of the pandemic's progression and key moments of change.
+
+### Finding the Rate of COVID Infection and Rate of Deaths (Cases per 100,000 People)
+To provide a normalized view of the COVID-19 data, I calculated the rates of new infections and deaths per 100,000 people. This approach allows for a more accurate comparison of the pandemic's impact across different population sizes.
+
+```{r part1-rates-per-100k}
+
+# Filter the data for the years 2020 and 2021 and summarize the total population
+population_totals <- us_population_estimates %>%
+  filter(Year %in% c(2020, 2021)) %>%
+  group_by(Year) %>%
+  summarise(Total_Population = sum(Estimate, na.rm = TRUE))
+
+#Start with daily_summary Create a new table daily_summary_per_100k and calculate the number of new deaths and cases per 100,000 people each day and a seven day average of new deaths and cases per 100,000 people. 
+daily_summary_per_100k <- daily_summary
+
+# Add year column to daily_summary_per_100k for joining
+daily_summary_per_100k <- daily_summary_per_100k %>%
+  mutate(year = year(date))  # Using lubridate's year function to extract year
+
+# Join population_totals with daily_summary_per_100k on the year
+daily_summary_per_100k <- daily_summary_per_100k %>%
+  left_join(population_totals, by = c("year" = "Year"))
+
+# Adjust multiple columns by scaling them based on total population
+daily_summary_per_100k <- daily_summary_per_100k %>%
+  mutate(
+    total_deaths = total_deaths * (100000 / Total_Population),
+    total_cases = total_cases * (100000 / Total_Population),
+    delta_deaths_1 = delta_deaths_1 * (100000 / Total_Population),
+    delta_cases_1 = delta_cases_1 * (100000 / Total_Population),
+    delta_deaths_7 = delta_deaths_7 * (100000 / Total_Population),
+    delta_cases_7 = delta_cases_7 * (100000 / Total_Population)
+  )
+
+#Print
+daily_summary_per_100k
+
+```
+
+### Visualizing the Rate of COVID Infection and Rate of Deaths (Cases per 100,000 People)
+To visualize the rate of new COVID-19 infections and deaths, I plotted the seven-day averages of new cases and deaths per 100,000 people. This visualization provides insights into the pandemic's trends and allows for a clearer comparison over time.
+
+```{r part1-rates-per-100k-graph, fig.align="center"}
+
+# Filter out NA values in delta_cases_7 before plotting
+daily_summary_per_100k <- daily_summary_per_100k %>%
+  filter(!is.na(delta_cases_7))  # Exclude rows where delta_cases_7 is NA
+
+# Plotting 7-day average new cases and deaths per 100,000 people
+ggplot(data = daily_summary_per_100k, aes(x = date)) +
+  geom_line(aes(y = delta_cases_7, color = "7-Day Average New Cases"), size = 1) +  # Plot 7-day average new cases
+  geom_line(aes(y = delta_deaths_7 *10, color = "7-Day Average New Deaths"), size = 1) +  # Plot 7-day average new deaths
+  scale_y_continuous(
+    name = "New Cases per 100,000",
+    labels = scales::comma,  # Format y-axis labels with commas
+    sec.axis = sec_axis(~ . * (1/10), name = "New Deaths per 100,000", labels = scales::comma)  # Create secondary axis for deaths
+  ) +
+  scale_x_date(
+    date_breaks = "6 month",  # Set the breaks to every 6 months
+    date_labels = "%b %Y"  # Format the labels as "Month Year"
+  ) +
+  labs(title = "Daily New COVID-19 Cases and Deaths per 100,000 People (7-Day Average)",
+       x = "Date",
+       y = "Number of New Cases per 100,000",
+       color = "Legend") +  # Title for the legend
+  scale_color_manual(values = c("7-Day Average New Cases" = "blue", "7-Day Average New Deaths" = "red")) +  # Define colors for the legend
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    legend.position = "bottom",  # Position the legend at the bottom
+    axis.title.y = element_text(color = "blue"),  # Color y-axis title for new cases
+    axis.text.y = element_text(color = "blue"),  # Color y-axis labels for new cases
+    axis.title.y.right = element_text(color = "red"),  # Color secondary y-axis title for new deaths
+    axis.text.y.right = element_text(color = "red")  # Color secondary y-axis labels for new deaths
+  )
+
+```
+
+### Determining Top 10 States with COVID-19 Infections
+
+To identify the states with the highest number of COVID-19 cases and deaths, I analyzed data from March 15, 2020, to December 31, 2021. This analysis highlights the states most impacted by the pandemic during this period.
+
+```{r part2-top-10-states}
+
+#Filter Dates
+date_filter_start <- "2020-03-15"
+date_filter_end <- "2022-12-31"
+
+# Determine the top 10 states in terms of total deaths and cases between March 15, 2020, and December 31, 2021. To do this, transform your combined COVID-19 data to summarize total deaths and cases by state up to December 31, 2021. 
+
+# Combine the datasets
+regions_to_exclude <- c("Puerto Rico", "Guam", "Virgin Islands", "Northern Mariana Islands", "American Samoa")
+us_counties_combined <- rbind(us_counties_2020, us_counties_2021) %>% 
+    filter(!state %in% regions_to_exclude) %>%
+    filter(date >= as.Date(date_filter_start) & date <= as.Date(date_filter_end))
+
+#us_counties_combined
+
+state_summary <- us_counties_combined %>% 
+  group_by(state, date) %>% 
+  summarise(
+    total_deaths = sum(deaths, na.rm = TRUE),
+    total_cases = sum(cases, na.rm = TRUE)
+  ) %>% 
+  arrange(desc(total_cases)) %>% 
+  filter(date == "2021-12-31")
+          
+state_summary
+
+```
+
+### Determining Top 10 States With COVID Infection Rates
+
+To provide a normalized view of the impact, I calculated the infection and death rates per 100,000 people. This method allows for fairer comparisons across states with different population sizes.
+
+
+```{r part2-top-10-states-rates}
+
+# Filter the data for the years 2020 and 2021 and summarize the total population
+population_totals <- us_population_estimates %>%
+  filter(Year %in% c(2020, 2021)) %>%
+  group_by(STNAME,Year) %>%
+  summarise(Total_Population = sum(Estimate, na.rm = TRUE))
+
+#population_totals
+
+state_summary_per_100k <- state_summary %>% 
+  mutate(year = year(date)) %>% 
+  left_join(population_totals, by = c("year" = "Year", "state" = "STNAME")) %>% 
+  mutate(
+    deaths_per_100k = total_deaths * (100000 / Total_Population),
+    cases_per_100k = total_cases * (100000 / Total_Population)
+  ) %>% 
+  arrange(desc(cases_per_100k)) %>% 
+  select(state, date, deaths_per_100k,cases_per_100k) %>% 
+  arrange(desc(cases_per_100k))
+
+state_summary_per_100k
+
+```
+
+### Finding state-Level Data
+
+To dive deeper into specific states, I analyzed the COVID-19 data for individual states, focusing on metrics such as total cases, deaths, and rates per 100,000 people.
+
+```{r part2-state-level-data}
+
+#Vars
+chosen_state = "Utah"
+date_filter_start <- "2020-03-15"
+date_filter_end <- "2021-12-31"
+
+# Combine the datasets
+us_counties_combined <- filter_combine_us_counties(date_filter_start,date_filter_end)
+
+
+#Create a function
+calc_state_summary <- function(state_name){
+  
+ single_state_summary <- us_counties_combined %>% 
+  filter(state == state_name) %>% 
+  group_by(state,date) %>% 
+  summarise(
+    total_deaths = sum(deaths, na.rm = TRUE),
+    total_cases = sum(cases, na.rm = TRUE)
+  ) %>% 
+  mutate( year = year(date) ) %>% 
+  left_join(population_totals, by = c("year" = "Year", "state" = "STNAME")) %>% 
+  mutate(
+    deaths_per_100k = total_deaths * (100000/Total_Population),
+    cases_per_100k = total_cases * (100000/Total_Population),
+    deaths_7_day = (deaths_per_100k - lag(deaths_per_100k, 7, default = NA))/7,
+    cases_7_day = (cases_per_100k - lag(cases_per_100k, 7, default = NA))/7
+  ) %>% 
+  select (state, date, total_cases, deaths_per_100k, cases_per_100k, deaths_7_day, cases_7_day)
+  
+return(single_state_summary)
+ 
+}
+
+calc_state_summary(chosen_state)
+```
+
+### Visualizing state-Level Data
+
+To visualize the state-level COVID-19 data, I created a function that plots the seven-day average of new cases and deaths per 100,000 people. This visualization highlights trends and provides a clearer understanding of the pandemic's impact at the state level.
+
+```{r part2-state-level-data-graph, message=FALSE, fig.align="center", echo=FALSE, warning=FALSE}
+
+plot_state_data <- function(state) {
+  
+  state_data <- calc_state_summary(state)
+  
+  # Plotting 7-day average new cases and deaths per 100,000 people
+  ggplot(data = state_data, aes(x = date)) +
+    geom_line(aes(y = cases_7_day, color = "7-Day Average New Cases"), size = 1) +  # Plot 7-day average new cases
+    geom_line(aes(y = deaths_7_day * 10, color = "7-Day Average New Deaths"), size = 1) +  # Plot 7-day average new deaths
+    scale_y_continuous(
+      name = "New Cases per 100,000",
+      labels = comma,  # Format y-axis labels with commas
+      sec.axis = sec_axis(~ . * (1/10), name = "New Deaths per 100,000", labels = comma)  # Create secondary axis for deaths
+    ) +
+    scale_x_date(
+      date_breaks = "6 month",  # Set the breaks to every 6 months
+      date_labels = "%b %Y"  # Format the labels as "Month Year"
+    ) +
+    labs(
+      title = paste("Daily New COVID-19 Cases and Deaths per 100,000 People (7-Day Average) in", state),
+      x = "Date",
+      y = "Number of New Cases per 100,000",
+      color = "Legend"
+    ) +  # Title for the legend
+    scale_color_manual(
+      values = c("7-Day Average New Cases" = "blue", "7-Day Average New Deaths" = "red")
+    ) +  # Define colors for the legend
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(hjust = 0.5),  # Center the title
+      legend.position = "bottom",  # Position the legend at the bottom
+      axis.title.y = element_text(color = "blue"),  # Color y-axis title for new cases
+      axis.text.y = element_text(color = "blue"),  # Color y-axis labels for new cases
+      axis.title.y.right = element_text(color = "red"),  # Color secondary y-axis title for new deaths
+      axis.text.y.right = element_text(color = "red")  # Color secondary y-axis labels for new deaths
+    )
+}
+
+# Example usage
+plot_state_data(chosen_state)
+
+
+```
+
+### Finding County-Level Data
+
+To explore the COVID-19 impact at the county level within a specific state, I filtered the data to compute total cases and deaths for each county.
+
+```{r part2-county-top-10}
+
+#Filter Dates
+date_filter_start <- "2020-03-15"
+date_filter_end <- "2021-12-31"
+
+# Combine the datasets
+us_counties_combined <- filter_combine_us_counties(date_filter_start,date_filter_end)
+
+county_summary <- us_counties_combined %>% 
+  filter(state == chosen_state) %>% 
+  group_by(county, date, fips) %>% 
+  summarise(
+    total_deaths = sum(deaths, na.rm = TRUE),
+    total_cases = sum(cases, na.rm = TRUE),
+    .groups = 'drop'  # Drop grouping, to prevent grouping issues later
+  ) %>% 
+  filter(date == "2021-12-20") %>% 
+  arrange(desc(total_deaths))
+  
+
+county_summary
+```
+
+### Mapping County-Level Data
+
+To visualize the county-level data, I created maps showing total deaths and cases per 100,000 people for the chosen state. These maps provide a detailed view of the COVID-19 impact across different counties.
+
+#### County-Level Deaths
+
+```{r county-map-deaths, fig.align="center"}
+
+plot_usmap(regions = "county", include=chosen_state, data = county_summary, values = "total_deaths", color = "blue") +
+  scale_fill_continuous(low = "white", high = "blue", name = paste("COVID-19 Deaths per 100,000 in ", chosen_state, " by County"))
+
+```
+
+#### County-Level Cases
+
+```{r county-map-cases, fig.align="center"}
+
+plot_usmap(regions = "county", include=chosen_state, data = county_summary, values = "total_cases", color = "blue") +
+  scale_fill_continuous(low = "white", high = "blue", name = paste("COVID-19 Cases per 100,000 in ", chosen_state, " by County"))
+
+```
+
+### Comparing Rates of Different States
+
+To compare the COVID-19 impact across different states, I plotted the seven-day average of new cases and deaths per 100,000 people for multiple states. This comparison highlights how the pandemic affected each state over time.
+
+```{r part2-comparing-state-rates, fig.align="center", warning = FALSE}
+
+colorado_summary <- calc_state_summary("Colorado")
+utah_summary <- calc_state_summary("Utah")
+texas_summary <- calc_state_summary("Texas")
+california_summary <- calc_state_summary("California")
+
+
+graph_data <- data.frame(
+  date = as.Date(colorado_summary$date),
+  colorado_series = colorado_summary$deaths_7_day,
+  utah_series = utah_summary$deaths_7_day,
+  texas_series = texas_summary$deaths_7_day,
+  california_series = california_summary$deaths_7_day
+)
+
+# Plot with four series: Colorado, Utah, California, and Texas
+ggplot(graph_data, aes(x = date)) +
+  geom_line(aes(y = colorado_series, color = "Colorado")) +
+  geom_line(aes(y = utah_series, color = "Utah")) +
+  geom_line(aes(y = california_series, color = "California")) +  # Adding California series
+  geom_line(aes(y = texas_series, color = "Texas")) +  # Adding Texas series
+  scale_color_manual(values = c("Colorado" = "blue", "Utah" = "red", 
+                                "California" = "green", "Texas" = "orange")) +
+  labs(title = "7-Day Average of COVID-19 Deaths per 100,000 by State", x = "Date", y = "Deaths", color = "Series") +
+  theme_minimal()
+
+
+graph_data <- data.frame(
+  date = as.Date(colorado_summary$date),
+  colorado_series = colorado_summary$cases_7_day,
+  utah_series = utah_summary$cases_7_day,
+  texas_series = texas_summary$cases_7_day,
+  california_series = california_summary$cases_7_day
+)
+
+# Plot with four series: Colorado, Utah, California, and Texas
+ggplot(graph_data, aes(x = date)) +
+  geom_line(aes(y = colorado_series, color = "Colorado")) +
+  geom_line(aes(y = utah_series, color = "Utah")) +
+  geom_line(aes(y = california_series, color = "California")) +  # Adding California series
+  geom_line(aes(y = texas_series, color = "Texas")) +  # Adding Texas series
+  scale_color_manual(values = c("Colorado" = "blue", "Utah" = "red", 
+                                "California" = "green", "Texas" = "orange")) +
+  labs(title = "7-Day Average of COVID-19 Cases per 100,000 by State", x = "Date", y = "Cases", color = "Series") +
+  theme_minimal()
+
+```
+
+### Top 10 Countries in Terms of Deaths
+
+This section identifies the top 10 countries most affected by COVID-19 in terms of deaths. The analysis utilizes data from the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University, focusing on cumulative cases and deaths.
+
+```{r global}
+
+#Pivot function
+pivot_global <- function(covid_data){
+  # Tidying the data: transforming from wide to long format focusing only on date columns
+  covid_long <- covid_data %>%
+    pivot_longer(
+      cols = matches("^\\d{1,2}/\\d{1,2}/\\d{2}$"),  # This regex matches the date format m/d/yy
+      names_to = "date",
+      values_to = "cases"
+    ) %>%
+    mutate(date = as.Date(date, format = "%m/%d/%y")) %>% # Convert date from character to Date type
+    select(date, everything())
+
+  # Return
+  return(covid_long)
+}
+
+# First, combine and tidy the CSSE death and cases data sets. You may wish to keep the two sets separate.
+# Then, tidy the global population estimates. While tidying your data, remember to include columns that you will be able to use when joining the COVID-19 data. 
+csse_global_deaths_long <- pivot_global(csse_global_deaths) %>% 
+  rename (deaths = cases)
+#csse_global_deaths_long
+
+csse_global_cases_long <- pivot_global(csse_global_cases) 
+
+#Combine and adjust dates
+csse_global_all <- inner_join(csse_global_deaths_long, csse_global_cases_long, by = c("date","Country/Region","Province/State")) %>% 
+  #filter(date >= date_filter_start) %>% 
+  filter(date == date_filter_end) %>% 
+  select(date,"Country/Region","Province/State",cases,deaths) %>% 
+  mutate(year = year(date))
+
+#Take a subset
+global_pop_subset <- global_population_estimates %>% 
+  select("Country Name","2021 [YR2021]") %>% 
+  rename("population" = "2021 [YR2021]")
+
+
+#Group global data by country
+csse_global_all_by_country <- csse_global_all %>% 
+  group_by(`Country/Region`) %>% 
+  summarise(
+    total_cases = sum(cases),
+    total_deaths = sum(deaths)
+  )
+
+#Combine with the global data set for populations
+csse_global_pops <- left_join(csse_global_all_by_country, global_pop_subset,by = c("Country/Region" = "Country Name") )
+  
+csse_global_pops <- csse_global_pops %>%
+  filter(!is.na(population)) %>%  # Filter out NAs in population
+  #filter(as.Date(date) == as.Date("2021-12-31")) %>%  # Filter out the date 2021-12-31
+  mutate(
+    population = as.numeric(population),  # Convert population to numeric
+    total_cases = as.numeric(total_cases),  # Convert total_cases to numeric
+    cases_per_100k = total_cases * (100000 / population),
+    deaths_per_100k = total_deaths * (100000 / population)
+  ) %>% 
+  select(`Country/Region`, cases_per_100k, deaths_per_100k) %>% 
+  arrange(desc(cases_per_100k))
+
+# View the cleaned data
+csse_global_pops
+
+
+```
+
+### Visualizing the Impact
+
+The following visualization compares the top 10 countries in terms of COVID-19 cases and deaths per 100,000 people. This comparison provides insight into how different countries were impacted by the pandemic.
+
+```{r global-graph}
+
+ccse_global_top_10 <- head(csse_global_pops, 10)
+  
+
+# Reshape the data to long format
+ccse_global_top_10_long <- ccse_global_top_10 %>%
+  pivot_longer(
+    cols = c(cases_per_100k, deaths_per_100k),
+    names_to = "Metric",
+    values_to = "Number"
+  )
+
+# Adjust Metric names for clarity
+ccse_global_top_10_long$Metric <- recode(ccse_global_top_10_long$Metric,
+                                         cases_per_100k = "Cases per 100k",
+                                         deaths_per_100k = "Deaths per 100k")
+
+# Plot the data with side-by-side bars
+ggplot(ccse_global_top_10_long, aes(x = `Country/Region`, y = Number, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  scale_fill_manual(values = c("Cases per 100k" = "blue", "Deaths per 100k" = "red")) +
+  labs(title = "COVID-19 Impact: Cases and Deaths per 100,000 People",
+       x = "Country",
+       y = "Number per 100,000",
+       fill = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+This visualization helps to compare the relative impact of COVID-19 across different countries, highlighting those with the highest rates of cases and deaths per 100,000 people.
+
+## Conclusion
+The comprehensive analysis of COVID-19 data at various levels—national, state, county, and global—provides valuable insights into the pandemic's impact over time. By aggregating and visualizing data from multiple sources, I have highlighted significant trends and key moments in the spread of the virus.
+
+At the national level, the United States experienced substantial fluctuations in daily cases and deaths, with clear peaks that align with known waves of the pandemic. This data underscores the importance of timely public health interventions and continuous monitoring.
+
+State-level analysis revealed significant differences in how the pandemic affected various states. By comparing total cases and deaths, as well as normalizing the data per 100,000 people, it became evident that population size plays a crucial role in understanding the true impact. States like California, Texas, and Florida showed high absolute numbers, while smaller states like North Dakota and Rhode Island had higher rates per capita.
+
+County-level data within specific states, such as Utah, provided a more granular view of the pandemic. Mapping total deaths and cases at the county level highlighted regional hotspots and areas that may require more targeted public health efforts.
+
+On a global scale, the top 10 countries with the highest rates of COVID-19 cases and deaths per 100,000 people were identified. This comparison illuminated the varying degrees of impact and the different stages of the pandemic experienced by each country. The visualization of global data emphasized the importance of international cooperation and resource allocation to manage and mitigate the effects of the virus.
+
+In conclusion, this multi-level analysis of COVID-19 data demonstrates the complex and varied nature of the pandemic. It highlights the need for robust data collection and analysis to inform public health decisions and ultimately save lives. The insights gained from this analysis can guide future responses to similar public health crises, ensuring that interventions are both effective and equitable.
+
